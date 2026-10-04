@@ -163,6 +163,19 @@ function systemDirectories(isWindows: boolean): string[] {
   return ["/etc", "/var", "/sys", "/proc", "/dev", "/boot", "/root", "/bin", "/sbin", "/usr"];
 }
 
+/** Canonicalize trusted comparison roots, retaining their lexical form only
+ * when the host denies inspection. Candidate paths still fail closed. */
+function canonicalComparisonRoot(
+  target: string,
+  resolver: typeof path.posix | typeof path.win32,
+): string {
+  try {
+    return canonicalRestrictionPath(target, resolver);
+  } catch {
+    return resolver.resolve(target);
+  }
+}
+
 export function isRestrictedWorkspaceDirectory(target: string): PathRestrictionResult {
   if (!target) return { restricted: true, reason: "Path is required" };
 
@@ -185,15 +198,7 @@ export function isRestrictedWorkspaceDirectory(target: string): PathRestrictionR
   }
 
   // 2. User home directory root check
-  let home: string;
-  try {
-    home = canonicalRestrictionPath(homedir(), resolver);
-  } catch {
-    // The OS-provided home path is a trusted comparison root. If Windows
-    // denies canonicalization, retain the lexical root instead of allowing the
-    // failure to disable all workspace validation.
-    home = resolver.resolve(homedir());
-  }
+  const home = canonicalComparisonRoot(homedir(), resolver);
   if (sameOrWithin(home, normalized, resolver)) {
     return { restricted: true, reason: "A directory containing the user home cannot be used as a workspace" };
   }
@@ -201,7 +206,7 @@ export function isRestrictedWorkspaceDirectory(target: string): PathRestrictionR
   // 3. User sensitive subdirectories (~/.ssh, ~/.aws, ~/.gnupg, ~/.azure, ~/.kube, ~/.pi)
   const sensitiveHomeDirs = [".ssh", ".aws", ".gnupg", ".azure", ".kube", ".pi"];
   for (const sub of sensitiveHomeDirs) {
-    const full = resolver.resolve(home, sub);
+    const full = canonicalComparisonRoot(resolver.resolve(home, sub), resolver);
     if (sameOrWithin(normalized, full, resolver) || sameOrWithin(full, normalized, resolver)) {
       return { restricted: true, reason: `Sensitive directory "${sub}" cannot be used as a workspace` };
     }
@@ -209,7 +214,7 @@ export function isRestrictedWorkspaceDirectory(target: string): PathRestrictionR
 
   // 4. System directories check
   for (const sysDir of systemDirectories(isWindows)) {
-    const resolvedSys = resolver.resolve(sysDir);
+    const resolvedSys = canonicalComparisonRoot(sysDir, resolver);
     if (sameOrWithin(normalized, resolvedSys, resolver) || sameOrWithin(resolvedSys, normalized, resolver)) {
       return { restricted: true, reason: `System directory "${sysDir}" cannot be used as a workspace` };
     }
@@ -230,26 +235,21 @@ export function isRestrictedBrowseDirectory(target: string): PathRestrictionResu
     return { restricted: true, reason: "Invalid path" };
   }
 
-  const cmp = isWindows ? normalized.toLowerCase() : normalized;
-  const home = resolver.resolve(homedir());
+  const home = canonicalComparisonRoot(homedir(), resolver);
 
   // Browsing into sensitive home dirs is forbidden
   const sensitiveHomeDirs = [".ssh", ".aws", ".gnupg", ".azure", ".kube", ".pi"];
   for (const sub of sensitiveHomeDirs) {
-    const full = resolver.resolve(home, sub);
-    const cmpFull = isWindows ? full.toLowerCase() : full;
-    const fullWithSep = cmpFull.endsWith(resolver.sep) ? cmpFull : cmpFull + resolver.sep;
-    if (cmp === cmpFull || cmp.startsWith(fullWithSep)) {
+    const full = canonicalComparisonRoot(resolver.resolve(home, sub), resolver);
+    if (sameOrWithin(normalized, full, resolver)) {
       return { restricted: true, reason: `Access to sensitive directory "${sub}" is forbidden` };
     }
   }
 
   // Browsing into system directories is forbidden
   for (const sysDir of systemDirectories(isWindows)) {
-    const resolvedSys = resolver.resolve(sysDir);
-    const cmpSys = isWindows ? resolvedSys.toLowerCase() : resolvedSys;
-    const sysWithSep = cmpSys.endsWith(resolver.sep) ? cmpSys : cmpSys + resolver.sep;
-    if (cmp === cmpSys || cmp.startsWith(sysWithSep)) {
+    const resolvedSys = canonicalComparisonRoot(sysDir, resolver);
+    if (sameOrWithin(normalized, resolvedSys, resolver)) {
       return { restricted: true, reason: `Access to system directory "${sysDir}" is forbidden` };
     }
   }

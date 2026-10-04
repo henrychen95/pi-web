@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { runNpx } from "@/lib/npx";
 import type { SkillInstallScope } from "@/lib/api-types";
 import { buildSkillUpdateArgs } from "@/lib/skill-updates";
 import { loadSkillsWithInstallInfo } from "@/lib/skills-service";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { getProjectTrustStatus } from "@/lib/project-trust";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +22,7 @@ export async function POST(req: Request) {
       cwd?: unknown;
       package?: unknown;
       scope?: unknown;
+      confirmCodeExecution?: unknown;
     };
     const cwd = typeof body.cwd === "string" ? body.cwd : "";
     const pkg = typeof body.package === "string" ? body.package : "";
@@ -32,6 +35,18 @@ export async function POST(req: Request) {
     const allowedRoots = await getAllowedFileRoots();
     if (!isExistingFilePathAllowed(cwd, allowedRoots)) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    }
+    if (scope === "global" && body.confirmCodeExecution !== true) {
+      return NextResponse.json({
+        error: "Global skill updates require confirmation because package lifecycle scripts may execute code",
+        reason: "code-execution-confirmation-required",
+      }, { status: 409 });
+    }
+    if (scope === "project" && !getProjectTrustStatus(cwd, getAgentDir()).trusted) {
+      return NextResponse.json(
+        { error: "Project resources must be trusted before updating project skills" },
+        { status: 403 },
+      );
     }
 
     const { skills } = await loadSkillsWithInstallInfo(cwd);

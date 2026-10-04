@@ -128,6 +128,26 @@ test("an explicit allow-link request makes that link target browsable", async (t
   assert.equal((await request("GET", path.join(hub, "second"), "list")).status, 403);
 });
 
+test("allow-link cannot add a restricted target to the file root allowlist", async (t) => {
+  const fixture = createHub(t);
+  if (!fixture) return;
+  const restrictedTarget = fs.realpathSync(path.parse(base).root);
+  const restrictedLink = path.join(fixture.hub, "restricted-root");
+  try {
+    fs.symlinkSync(restrictedTarget, restrictedLink, process.platform === "win32" ? "junction" : "dir");
+  } catch (error) {
+    if (error?.code === "EPERM") {
+      t.skip("Creating symbolic links requires additional privileges on this platform");
+      return;
+    }
+    throw error;
+  }
+
+  const response = await allowLink(restrictedLink, restrictedTarget);
+  assert.equal(response.status, 403);
+  assert.equal((await request("GET", restrictedLink, "list")).status, 403);
+});
+
 test("allow-link refuses anything that is not a directory link inside the roots", async (t) => {
   const fixture = createHub(t);
   if (!fixture) return;

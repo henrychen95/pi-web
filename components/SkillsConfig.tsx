@@ -648,6 +648,8 @@ export function SkillsConfig({
 
   const updateInstalledSkill = useCallback(async (skill: Skill) => {
     if (!skill.install) return;
+    const confirmCodeExecution = skill.install.scope === "global";
+    if (confirmCodeExecution && !window.confirm(t("plugins.updateConfirm"))) return;
     const key = updateKey(skill)!;
     setUpdatingSkill(key);
     setUpdateError(null);
@@ -659,6 +661,7 @@ export function SkillsConfig({
           cwd,
           package: skill.install.package,
           scope: skill.install.scope,
+          confirmCodeExecution,
         }),
       });
       const data = (await res.json()) as {
@@ -686,7 +689,7 @@ export function SkillsConfig({
     } finally {
       setUpdatingSkill(null);
     }
-  }, [cwd, loadSkills]);
+  }, [cwd, loadSkills, t]);
 
   const toggle = useCallback(async (skill: Skill) => {
     const next = !skill.disableModelInvocation;

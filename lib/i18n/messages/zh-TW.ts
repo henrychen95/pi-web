@@ -71,6 +71,7 @@ export const zhTWLocale: LocalePlugin = {
     "plugins.bulkDisabled": "套件已停用。",
     "plugins.bulkFailed": "{total} 個套件中有 {count} 個無法變更：",
     "plugins.globalInstallConfirm": "全域安裝可能以你的使用者權限執行第三方套件生命週期指令碼。是否繼續？",
+    "plugins.updateConfirm": "更新套件可能以你的使用者權限執行第三方套件生命週期指令碼。是否繼續？",
     "plugins.status.loaded": "已載入",
     "plugins.status.installed": "已安裝",
     "plugins.status.missing": "缺失",

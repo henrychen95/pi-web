@@ -704,6 +704,7 @@ export function PluginsConfig({
   }, [cwd, packages]);
 
   const updateAllPluginsAction = useCallback(async () => {
+    if (!window.confirm(t("plugins.updateConfirm"))) return;
     setUpdatingAll(true);
     setActionError(null);
     setActionMessage(null);
@@ -712,7 +713,7 @@ export function PluginsConfig({
       const res = await fetch("/api/plugins", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "update", cwd }),
+        body: JSON.stringify({ action: "update", cwd, confirmCodeExecution: true }),
       });
       const next = (await res.json()) as PluginsResponse & { error?: string };
       if (!res.ok || next.error) throw new Error(next.error ?? `HTTP ${res.status}`);
@@ -730,6 +731,8 @@ export function PluginsConfig({
   }, [cwd, sessionId, t]);
 
   const runAction = useCallback(async (action: PluginAction, pkg: PluginPackageInfo) => {
+    const confirmCodeExecution = action === "update";
+    if (confirmCodeExecution && !window.confirm(t("plugins.updateConfirm"))) return;
     const key = packageKey(pkg);
     setBusyKey(`${action}:${key}`);
     setActionError(null);
@@ -739,7 +742,13 @@ export function PluginsConfig({
       const res = await fetch("/api/plugins", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, source: pkg.source, scope: pkg.scope, cwd }),
+        body: JSON.stringify({
+          action,
+          source: pkg.source,
+          scope: pkg.scope,
+          cwd,
+          confirmCodeExecution,
+        }),
       });
       const next = (await res.json()) as PluginsResponse & { error?: string };
       if (!res.ok || next.error) throw new Error(next.error ?? `HTTP ${res.status}`);

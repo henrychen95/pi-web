@@ -96,6 +96,34 @@ test("global install requires explicit lifecycle-script confirmation", async () 
   assert.equal(body.reason, "code-execution-confirmation-required");
 });
 
+test("global updates require explicit lifecycle-script confirmation", async () => {
+  const response = await postPlugins({ action: "update" });
+  const body = await response.json();
+  assert.equal(response.status, 409);
+  assert.equal(body.reason, "code-execution-confirmation-required");
+});
+
+test("plugin updates cannot bypass confirmation or scope checks with a forged project scope", async () => {
+  await writeFile(settingsPath, JSON.stringify({ packages: ["npm:global-only"] }));
+
+  const bulk = await postPlugins({
+    action: "update",
+    scope: "project",
+    confirmCodeExecution: true,
+  });
+  assert.equal(bulk.status, 400);
+
+  const single = await postPlugins({
+    action: "update",
+    source: "npm:global-only",
+    scope: "project",
+    confirmCodeExecution: true,
+  });
+  assert.equal(single.status, 400);
+  assert.match((await single.json()).error, /scope does not match/);
+  await writeFile(settingsPath, JSON.stringify({ packages: [] }));
+});
+
 test("bulk disable writes every listed package and reports each one", async () => {
   const [alpha, beta, gamma] = await Promise.all(["bulk-alpha", "bulk-beta", "bulk-gamma"].map(makePackage));
   await writeFile(settingsPath, JSON.stringify({

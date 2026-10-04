@@ -508,7 +508,38 @@ export async function POST(req: Request) {
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
       await packageManager.removeAndPersist(source, { local });
     } else if (body.action === "update") {
-      if (!source && !projectTrust.trusted && packageManager.listConfiguredPackages().some((pkg) => pkg.scope === "project")) {
+      const configuredPackages = packageManager.listConfiguredPackages().map((pkg) => ({
+        source: pkg.source,
+        scope: toPluginScope(pkg.scope),
+      }));
+      if (!source && body.scope !== undefined) {
+        return NextResponse.json({ error: "scope is only supported when updating one package" }, { status: 400 });
+      }
+      if (source) {
+        if (body.scope !== "global" && body.scope !== "project") {
+          return NextResponse.json({ error: "scope must be global or project" }, { status: 400 });
+        }
+        const configuredScopes = configuredPackages
+          .filter((pkg) => pkg.source === source)
+          .map((pkg) => pkg.scope);
+        if (configuredScopes.length === 0) {
+          return NextResponse.json({ error: "Package is not configured" }, { status: 404 });
+        }
+        if (!configuredScopes.includes(body.scope)) {
+          return NextResponse.json({ error: "Package scope does not match its configured scope" }, { status: 400 });
+        }
+      }
+      if (body.confirmCodeExecution !== true) {
+        return NextResponse.json({
+          error: "Package updates require confirmation because package lifecycle scripts may execute code",
+          reason: "code-execution-confirmation-required",
+        }, { status: 409 });
+      }
+      // The SDK matches an update source by package identity across both
+      // scopes. If this cwd has any project package, require project trust even
+      // for a nominally global single-package request so an identity alias
+      // cannot update the project cache through a forged scope.
+      if (!projectTrust.trusted && configuredPackages.some((pkg) => pkg.scope === "project")) {
         return NextResponse.json(
           { error: "Project resources must be trusted before updating project plugins" },
           { status: 403 },

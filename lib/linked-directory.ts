@@ -1,7 +1,12 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { isExistingPathWithinRoots, isPathWithinRoots, resolveRealRoots } from "./path-security";
+import {
+  isExistingPathWithinRoots,
+  isPathWithinRoots,
+  isRestrictedWorkspaceDirectory,
+  resolveRealRoots,
+} from "./path-security";
 import { samePath } from "./paths";
 
 /**
@@ -114,6 +119,10 @@ export function checkLinkedDirectoryApproval(
   // The link may have been pointed elsewhere since it was listed.
   if (!samePath(target, expectedTarget)) {
     return { ok: false, status: 409, error: "Link target changed; refresh the file list" };
+  }
+  const restriction = isRestrictedWorkspaceDirectory(target);
+  if (restriction.restricted) {
+    return { ok: false, status: 403, error: restriction.reason || "Link target is restricted" };
   }
   return {
     ok: true,

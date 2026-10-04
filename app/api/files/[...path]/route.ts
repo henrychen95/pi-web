@@ -128,7 +128,7 @@ async function allowLinkedDirectory(
   if (!approval.ok) {
     return NextResponse.json({ error: approval.error }, { status: approval.status });
   }
-  if (!approval.alreadyAllowed) allowFileRoot(approval.target, { allowRestricted: true });
+  if (!approval.alreadyAllowed) allowFileRoot(approval.target);
   return NextResponse.json({ path: approval.target });
 }
 
