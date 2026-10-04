@@ -837,6 +837,8 @@ export function PluginsConfig({
   const installPlugin = useCallback(async () => {
     const source = normalizePluginSourceInput(installSource).trim();
     if (!source) return;
+    const confirmCodeExecution = installScope === "global";
+    if (confirmCodeExecution && !window.confirm(t("plugins.globalInstallConfirm"))) return;
     setInstallSource(source);
     const key = `${installScope}\0${source}`;
     setBusyKey(`install:${key}`);
@@ -847,7 +849,13 @@ export function PluginsConfig({
       const res = await fetch("/api/plugins", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "install", source, scope: installScope, cwd }),
+        body: JSON.stringify({
+          action: "install",
+          source,
+          scope: installScope,
+          cwd,
+          confirmCodeExecution,
+        }),
       });
       const next = (await res.json()) as PluginsResponse & { error?: string };
       if (!res.ok || next.error) throw new Error(next.error ?? `HTTP ${res.status}`);

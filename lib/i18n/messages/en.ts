@@ -70,6 +70,7 @@ export const enLocale: LocalePlugin = {
     "plugins.bulkEnabled": "Packages enabled.",
     "plugins.bulkDisabled": "Packages disabled.",
     "plugins.bulkFailed": "Could not change {count} of {total} packages:",
+    "plugins.globalInstallConfirm": "Global installation may run third-party package lifecycle scripts with your user permissions. Continue?",
     "plugins.status.loaded": "loaded",
     "plugins.status.installed": "installed",
     "plugins.status.missing": "missing",

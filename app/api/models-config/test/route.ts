@@ -5,7 +5,8 @@ import { join } from "path";
 import { completeSimple, type AssistantMessage } from "@earendil-works/pi-ai/compat";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
-import { isSafeModelUrl } from "@/lib/ssrf-protection";
+import { createSafeModelFetch, isSafeModelUrl } from "@/lib/ssrf-protection";
+import { restoreModelsConfigRequestSecrets } from "@/lib/models-config-store";
 
 export const dynamic = "force-dynamic";
 
@@ -40,20 +41,48 @@ export async function POST(req: Request) {
   let tempDir: string | undefined;
 
   try {
-    const body = await req.json() as { providerName?: unknown; provider?: unknown; model?: unknown };
+    const body = await req.json() as {
+      providerName?: unknown;
+      providerSourceName?: unknown;
+      modelSourceId?: unknown;
+      provider?: unknown;
+      model?: unknown;
+    };
     const providerName = typeof body.providerName === "string" ? body.providerName.trim() : "";
     if (!providerName) return NextResponse.json({ ok: false, error: "providerName is required" }, { status: 400 });
     if (!isRecord(body.provider)) return NextResponse.json({ ok: false, error: "provider is required" }, { status: 400 });
     if (!isRecord(body.model)) return NextResponse.json({ ok: false, error: "model is required" }, { status: 400 });
+    const providerSourceName = typeof body.providerSourceName === "string" && body.providerSourceName.trim()
+      ? body.providerSourceName.trim()
+      : providerName;
+    const modelSourceId = typeof body.modelSourceId === "string" && body.modelSourceId.trim()
+      ? body.modelSourceId.trim()
+      : undefined;
+    const restored = restoreModelsConfigRequestSecrets({
+      providerName,
+      sourceProviderName: providerSourceName,
+      provider: body.provider,
+      model: body.model,
+      sourceModelId: modelSourceId,
+    });
+    const provider = restored.provider;
+    const modelConfig = restored.model ?? body.model;
 
-    const modelId = typeof body.model.id === "string" ? body.model.id.trim() : "";
+    const modelId = typeof modelConfig.id === "string" ? modelConfig.id.trim() : "";
     if (!modelId) return NextResponse.json({ ok: false, error: "Model ID is required" }, { status: 400 });
 
-    const configuredBaseUrl = typeof body.provider.baseUrl === "string" ? body.provider.baseUrl.trim() : "";
+    const configuredBaseUrl = typeof provider.baseUrl === "string" ? provider.baseUrl.trim() : "";
     if (configuredBaseUrl) {
       const safety = isSafeModelUrl(configuredBaseUrl);
       if (!safety.safe) {
         return NextResponse.json({ ok: false, error: safety.reason || "Base URL is not allowed" }, { status: 400 });
+      }
+    }
+    const configuredModelBaseUrl = typeof modelConfig.baseUrl === "string" ? modelConfig.baseUrl.trim() : "";
+    if (configuredModelBaseUrl) {
+      const safety = isSafeModelUrl(configuredModelBaseUrl);
+      if (!safety.safe) {
+        return NextResponse.json({ ok: false, error: safety.reason || "Model Base URL is not allowed" }, { status: 400 });
       }
     }
 
@@ -62,8 +91,8 @@ export async function POST(req: Request) {
     writeFileSync(modelsPath, JSON.stringify({
       providers: {
         [providerName]: {
-          ...body.provider,
-          models: [{ ...body.model, id: modelId }],
+          ...provider,
+          models: [{ ...modelConfig, id: modelId }],
         },
       },
     }, null, 2), "utf8");
@@ -74,6 +103,13 @@ export async function POST(req: Request) {
 
     const model = modelRuntime.getModel(providerName, modelId);
     if (!model) return NextResponse.json({ ok: false, error: `Model not found: ${providerName}/${modelId}` });
+    const resolvedUrlSafety = isSafeModelUrl(model.baseUrl);
+    if (!resolvedUrlSafety.safe) {
+      return NextResponse.json({
+        ok: false,
+        error: resolvedUrlSafety.reason || "Resolved model Base URL is not allowed",
+      }, { status: 400 });
+    }
 
     const resolved = await modelRuntime.getAuth(model);
     if (!resolved?.auth.apiKey) {
@@ -82,6 +118,7 @@ export async function POST(req: Request) {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
+    const safeTransport = createSafeModelFetch();
     let status: number | undefined;
     const startedAt = Date.now();
 
@@ -98,6 +135,7 @@ export async function POST(req: Request) {
         maxTokens: 16,
         timeoutMs: TEST_TIMEOUT_MS,
         maxRetries: 0,
+        fetch: safeTransport.fetch,
         cacheRetention: "none",
         signal: controller.signal,
         onResponse: (response) => { status = response.status; },
@@ -121,6 +159,7 @@ export async function POST(req: Request) {
       });
     } finally {
       clearTimeout(timeout);
+      await safeTransport.close();
     }
   } catch (error) {
     return NextResponse.json({ ok: false, error: errorMessage(error) }, { status: 500 });

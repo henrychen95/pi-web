@@ -85,6 +85,17 @@ function postPlugins(body, projectCwd = cwd) {
   }));
 }
 
+test("global install requires explicit lifecycle-script confirmation", async () => {
+  const response = await postPlugins({
+    action: "install",
+    source: "example-plugin",
+    scope: "global",
+  });
+  const body = await response.json();
+  assert.equal(response.status, 409);
+  assert.equal(body.reason, "code-execution-confirmation-required");
+});
+
 test("bulk disable writes every listed package and reports each one", async () => {
   const [alpha, beta, gamma] = await Promise.all(["bulk-alpha", "bulk-beta", "bulk-gamma"].map(makePackage));
   await writeFile(settingsPath, JSON.stringify({

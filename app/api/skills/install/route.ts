@@ -20,14 +20,33 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { package: pkg, scope, cwd } = await req.json() as { package?: string; scope?: string; cwd?: string };
+    const {
+      package: pkg,
+      scope,
+      cwd,
+      confirmCodeExecution,
+    } = await req.json() as {
+      package?: string;
+      scope?: string;
+      cwd?: string;
+      confirmCodeExecution?: unknown;
+    };
     const trimmedPkg = (pkg ?? "").trim();
     if (!trimmedPkg) return NextResponse.json({ error: "package required" }, { status: 400 });
     if (!isValidSkillPackageName(trimmedPkg)) {
       return NextResponse.json({ error: "Invalid package name or dangerous characters detected" }, { status: 400 });
     }
 
-    const isGlobal = scope !== "project";
+    if (scope !== "global" && scope !== "project") {
+      return NextResponse.json({ error: "scope must be global or project" }, { status: 400 });
+    }
+    const isGlobal = scope === "global";
+    if (isGlobal && confirmCodeExecution !== true) {
+      return NextResponse.json({
+        error: "Global skill installation requires confirmation because package lifecycle scripts may execute code",
+        reason: "code-execution-confirmation-required",
+      }, { status: 409 });
+    }
     if (!isGlobal) {
       if (!cwd) return NextResponse.json({ error: "cwd required for project install" }, { status: 400 });
       const allowedRoots = await getAllowedFileRoots();

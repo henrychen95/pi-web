@@ -306,8 +306,8 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 // ── Provider detail ───────────────────────────────────────────────────────────
 
-function ProviderDetail({ name, editingName, provider, onChange, onEditingNameChange, onRename, onDelete, onAddModels, enabledModels }: {
-  name: string; editingName: string; provider: ProviderEntry;
+function ProviderDetail({ name, sourceName, editingName, provider, onChange, onEditingNameChange, onRename, onDelete, onAddModels, enabledModels }: {
+  name: string; sourceName: string; editingName: string; provider: ProviderEntry;
   onChange: (p: ProviderEntry) => void; onEditingNameChange: (n: string) => void;
   onRename: (n: string) => void; onDelete: () => void;
   onAddModels: (models: DiscoveredModel[]) => void; enabledModels: EnabledModelsController;
@@ -342,7 +342,11 @@ function ProviderDetail({ name, editingName, provider, onChange, onEditingNameCh
       const res = await fetch("/api/models-config/discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerName: name, provider: { ...provider, models: undefined } }),
+        body: JSON.stringify({
+          providerName: name,
+          providerSourceName: sourceName,
+          provider: { ...provider, models: undefined },
+        }),
       });
       const data = await res.json() as { models?: DiscoveredModel[]; endpoint?: string; error?: string };
       if (requestId !== discoveryRequestIdRef.current) return;
@@ -355,7 +359,7 @@ function ProviderDetail({ name, editingName, provider, onChange, onEditingNameCh
       if (requestId !== discoveryRequestIdRef.current) return;
       setDiscoveryState({ phase: "error", message: error instanceof Error ? error.message : String(error) });
     }
-  }, [discoveryState.phase, name, provider]);
+  }, [discoveryState.phase, name, provider, sourceName]);
 
   const existingModelIds = new Set((provider.models ?? []).map((model) => model.id));
   const discoveredModels = discoveryState.phase === "success" ? discoveryState.models : [];
@@ -827,14 +831,18 @@ function fillEmptyModelFields(
 
 function ModelDetail({
   providerName,
+  providerSourceName,
   provider,
   model,
+  modelSourceId,
   onChange,
   onDelete,
 }: {
   providerName: string;
+  providerSourceName: string;
   provider: ProviderEntry;
   model: ModelEntry;
+  modelSourceId?: string;
   onChange: (m: ModelEntry) => void;
   onDelete: () => void;
 }) {
@@ -904,7 +912,7 @@ function ModelDetail({
       const res = await fetch("/api/models-config/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerName, provider, model }),
+        body: JSON.stringify({ providerName, providerSourceName, provider, model, modelSourceId }),
       });
       const d = await res.json() as {
         ok?: boolean;
@@ -931,7 +939,7 @@ function ModelDetail({
     } catch (e) {
       setTestState({ phase: "error", message: e instanceof Error ? e.message : String(e) });
     }
-  }, [model, provider, providerName, testState.phase]);
+  }, [model, modelSourceId, provider, providerName, providerSourceName, testState.phase]);
 
   const handleCatalogFill = useCallback(async () => {
     const query = model.id.trim();
@@ -2040,7 +2048,10 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
       const res = await fetch("/api/models-config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
+        body: JSON.stringify({
+          config: draft,
+          providerRenames: [...renamesRef.current].map(([from, to]) => ({ from, to })),
+        }),
       });
       const d = await res.json() as { success?: boolean; error?: string };
       if (!res.ok || d.error) setSaveError(d.error ?? `HTTP ${res.status}`);
@@ -2072,6 +2083,9 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
   };
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
   const activeApiKey = apiKeyProviders.filter((p) => p.configured);
+  const sourceProviderName = (name: string) => (
+    [...renamesRef.current].find(([, current]) => current === name)?.[0] ?? name
+  );
 
   // Resolve current detail
   const detailContent = (() => {
@@ -2093,6 +2107,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
         <ProviderDetail
           key={selection.name}
           name={selection.name}
+          sourceName={sourceProviderName(selection.name)}
           editingName={providerNameDraft?.provider === selection.name ? providerNameDraft.name : selection.name}
           provider={provider}
           onChange={(p) => updateProvider(selection.name, p)}
@@ -2111,8 +2126,10 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
       <ModelDetail
         key={`${selection.providerName}-${selection.index}`}
         providerName={selection.providerName}
+        providerSourceName={sourceProviderName(selection.providerName)}
         provider={provider}
         model={model}
+        modelSourceId={savedModelIdsRef.current.get(selection.providerName)?.[selection.index] ?? undefined}
         onChange={(m) => updateModel(selection.providerName, selection.index, m)}
         onDelete={() => removeModel(selection.providerName, selection.index)}
       />

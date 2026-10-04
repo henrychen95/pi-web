@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { resolveModelDiscoveryAuth } from "@/lib/model-discovery-auth";
 import { buildModelsListUrl, parseDiscoveredModels } from "@/lib/model-discovery";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
-import { isSafeModelUrl } from "@/lib/ssrf-protection";
+import { createSafeModelFetch, isSafeModelUrl } from "@/lib/ssrf-protection";
+import { restoreModelsConfigRequestSecrets } from "@/lib/models-config-store";
 
 export const dynamic = "force-dynamic";
 
@@ -41,24 +42,32 @@ export async function POST(req: Request) {
   }
 
   try {
-    const body = await req.json() as { providerName?: unknown; provider?: unknown };
+    const body = await req.json() as { providerName?: unknown; providerSourceName?: unknown; provider?: unknown };
     const providerName = typeof body.providerName === "string" ? body.providerName.trim() : "";
     if (!providerName) return NextResponse.json({ error: "providerName is required" }, { status: 400 });
     if (!isRecord(body.provider)) return NextResponse.json({ error: "provider is required" }, { status: 400 });
+    const providerSourceName = typeof body.providerSourceName === "string" && body.providerSourceName.trim()
+      ? body.providerSourceName.trim()
+      : providerName;
+    const { provider } = restoreModelsConfigRequestSecrets({
+      providerName,
+      sourceProviderName: providerSourceName,
+      provider: body.provider,
+    });
 
-    const configuredBaseUrl = typeof body.provider.baseUrl === "string" ? body.provider.baseUrl.trim() : "";
-    const configuredApi = typeof body.provider.api === "string" && body.provider.api ? body.provider.api : "";
+    const configuredBaseUrl = typeof provider.baseUrl === "string" ? provider.baseUrl.trim() : "";
+    const configuredApi = typeof provider.api === "string" && provider.api ? provider.api : "";
 
     let auth: Awaited<ReturnType<typeof resolveModelDiscoveryAuth>>;
     try {
-      auth = await resolveModelDiscoveryAuth(providerName, body.provider);
+      auth = await resolveModelDiscoveryAuth(providerName, provider);
     } catch (error) {
       // Without a configured Base URL, pi's catalog was the only other source of
       // one; for a custom provider it fails with an error about the placeholder model.
       if (!configuredBaseUrl) return NextResponse.json({ error: "Base URL is required" }, { status: 400 });
       throw error;
     }
-    if (typeof body.provider.apiKey === "string" && body.provider.apiKey.trim() && !auth.apiKey) {
+    if (typeof provider.apiKey === "string" && provider.apiKey.trim() && !auth.apiKey) {
       return NextResponse.json({ error: `No API key found for "${providerName}"` }, { status: 400 });
     }
 
@@ -79,12 +88,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Base URL is invalid" }, { status: 400 });
     }
 
-    const response = await fetch(endpoint, {
-      cache: "no-store",
-      headers: buildHeaders(api, auth.apiKey, auth.headers),
-      signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
-    });
-    const responseText = await response.text();
+    const safeTransport = createSafeModelFetch();
+    let response: Response;
+    let responseText: string;
+    try {
+      response = await safeTransport.fetch(endpoint, {
+        cache: "no-store",
+        redirect: "manual",
+        headers: buildHeaders(api, auth.apiKey, auth.headers),
+        signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+      });
+      responseText = await response.text();
+    } finally {
+      await safeTransport.close();
+    }
     if (!response.ok) {
       return NextResponse.json({
         error: responseText.slice(0, 500) || `Upstream returned HTTP ${response.status}`,

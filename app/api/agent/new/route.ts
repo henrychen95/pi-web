@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { existsSync } from "fs";
+import { statSync } from "fs";
 import { randomUUID } from "crypto";
 import { allowFileRoot } from "@/lib/file-access";
 import { invalidateSessionListCache } from "@/lib/session-reader";
 import { startRpcSession } from "@/lib/rpc-manager";
+import { isRestrictedWorkspaceDirectory } from "@/lib/path-security";
+import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 
 const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
@@ -20,6 +22,13 @@ function parseThinkingLevel(value: unknown): ThinkingLevel | undefined {
 // type:"ensure_session" only creates the runtime so clients can query commands.
 // Returns pi's real session id plus the model/thinking state selected at startup.
 export async function POST(req: Request) {
+  if (!isApiRequestAllowed(req)) {
+    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  }
+  if (!hasJsonContentType(req)) {
+    return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
+  }
+
   let commandType: string | undefined;
   let promptAccepted = false;
   try {
@@ -35,9 +44,24 @@ export async function POST(req: Request) {
           : {}),
       }, { status: 400 });
     }
-    if (!existsSync(cwd)) {
+    let cwdStat;
+    try {
+      cwdStat = statSync(cwd);
+    } catch {
       return NextResponse.json({
         error: `Directory does not exist: ${cwd}`,
+        ...(commandType === "prompt"
+          ? { code: "prompt_rejected", accepted: false }
+          : {}),
+      }, { status: 400 });
+    }
+    if (!cwdStat.isDirectory()) {
+      return NextResponse.json({ error: `Path is not a directory: ${cwd}` }, { status: 400 });
+    }
+    const restriction = isRestrictedWorkspaceDirectory(cwd);
+    if (restriction.restricted) {
+      return NextResponse.json({
+        error: restriction.reason || "This directory cannot be used as a workspace",
         ...(commandType === "prompt"
           ? { code: "prompt_rejected", accepted: false }
           : {}),

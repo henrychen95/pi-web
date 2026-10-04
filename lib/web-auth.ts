@@ -6,6 +6,56 @@ export const PI_WEB_SESSION_MAX_AGE = process.env.PI_WEB_SESSION_MAX_AGE_SEC
   ? Number(process.env.PI_WEB_SESSION_MAX_AGE_SEC)
   : 60 * 60 * 24 * 7;
 
+const LOOPBACK_BIND_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+export type RemoteAccessRefusal = { status: 426 | 503; message: string };
+
+export function isLoopbackBindHostname(hostname: string | undefined): boolean {
+  return Boolean(hostname && LOOPBACK_BIND_HOSTS.has(hostname.trim().toLowerCase()));
+}
+
+export function isSecureWebRequest(
+  request: Request,
+  trustProxy = process.env.PI_WEB_TRUST_PROXY === "1",
+): boolean {
+  if (new URL(request.url).protocol === "https:") return true;
+  return trustProxy
+    && request.headers.get("x-forwarded-proto")?.split(",", 1)[0]?.trim().toLowerCase() === "https";
+}
+
+export function remoteAccessRefusal(
+  request: Request,
+  {
+    hostname = process.env.PI_WEB_HOSTNAME,
+    password = process.env.PI_WEB_PASSWORD,
+    allowInsecure = process.env.PI_WEB_ALLOW_INSECURE_LAN === "1",
+    trustProxy = process.env.PI_WEB_TRUST_PROXY === "1",
+  }: { hostname?: string; password?: string; allowInsecure?: boolean; trustProxy?: boolean } = {},
+): RemoteAccessRefusal | null {
+  if (allowInsecure) return null;
+  const loopback = isLoopbackBindHostname(hostname);
+  if (loopback && !trustProxy) return null;
+  if (!loopback) {
+    return {
+      status: 503,
+      message: "Remote HTTPS proxy mode requires a loopback Pi Web binding",
+    };
+  }
+  if (!isWebPasswordEnabled(password)) {
+    return {
+      status: 503,
+      message: "Remote access requires password authentication",
+    };
+  }
+  if (!isSecureWebRequest(request, trustProxy)) {
+    return {
+      status: 426,
+      message: "Remote password authentication requires HTTPS",
+    };
+  }
+  return null;
+}
+
 function hashSecret(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();
 }

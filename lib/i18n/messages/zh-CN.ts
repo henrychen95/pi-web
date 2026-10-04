@@ -70,6 +70,7 @@ export const zhCNLocale: LocalePlugin = {
     "plugins.bulkEnabled": "包已启用。",
     "plugins.bulkDisabled": "包已禁用。",
     "plugins.bulkFailed": "{total} 个包中有 {count} 个未能更改：",
+    "plugins.globalInstallConfirm": "全局安装可能以你的用户权限运行第三方包生命周期脚本。是否继续？",
     "plugins.status.loaded": "已加载",
     "plugins.status.installed": "已安装",
     "plugins.status.missing": "缺失",

@@ -6,6 +6,7 @@ import { writePrivateFileAtomicSync } from "./atomic-file";
 import { enLocale } from "./i18n/messages/en";
 import { zhCNLocale } from "./i18n/messages/zh-CN";
 import { getAgentDir } from "./session-reader";
+import { isSafeWebPushEndpoint } from "./ssrf-protection";
 
 export interface PushSubscriptionRecord {
   endpoint: string;
@@ -109,6 +110,16 @@ function pushStatusCode(error: unknown): number | undefined {
   return typeof statusCode === "number" ? statusCode : undefined;
 }
 
+function isUsableSubscription(value: unknown): value is PushSubscriptionRecord {
+  if (typeof value !== "object" || value === null) return false;
+  const subscription = value as Partial<PushSubscriptionRecord>;
+  return typeof subscription.endpoint === "string"
+    && typeof subscription.locale === "string"
+    && typeof subscription.keys?.p256dh === "string"
+    && typeof subscription.keys.auth === "string"
+    && isSafeWebPushEndpoint(subscription.endpoint).safe;
+}
+
 /**
  * Locale lookup for push payloads. The browser reports its UI locale when it
  * subscribes; unknown locales fall back to English.
@@ -125,7 +136,12 @@ export function localeText(locale: string, key: "sessionComplete" | "taskFinishe
 export function createWebPushNotifier(environment: WebPushEnvironment): WebPushNotifier {
   const state: PushStateFile = (() => {
     const loaded = environment.loadState();
-    if (loaded?.vapidKeys?.publicKey && loaded.vapidKeys.privateKey) return loaded;
+    if (loaded?.vapidKeys?.publicKey && loaded.vapidKeys.privateKey) {
+      return {
+        vapidKeys: loaded.vapidKeys,
+        subscriptions: Array.isArray(loaded.subscriptions) ? loaded.subscriptions : [],
+      };
+    }
     return { vapidKeys: environment.generateVapidKeys(), subscriptions: [] };
   })();
   const saveState = () => {
@@ -138,6 +154,7 @@ export function createWebPushNotifier(environment: WebPushEnvironment): WebPushN
       return state.vapidKeys.publicKey;
     },
     addSubscription(subscription) {
+      if (!isUsableSubscription(subscription)) return;
       state.subscriptions = [
         ...state.subscriptions.filter((s) => s.endpoint !== subscription.endpoint),
         subscription,
@@ -156,6 +173,11 @@ export function createWebPushNotifier(environment: WebPushEnvironment): WebPushN
 
       let pruned = false;
       for (const subscription of [...state.subscriptions]) {
+        if (!isUsableSubscription(subscription)) {
+          state.subscriptions = state.subscriptions.filter((candidate) => candidate !== subscription);
+          pruned = true;
+          continue;
+        }
         try {
           await environment.send(
             subscription,

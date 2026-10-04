@@ -437,6 +437,7 @@ export async function POST(req: Request) {
       scope?: PluginScope;
       packages?: unknown;
       cwd?: string;
+      confirmCodeExecution?: unknown;
     };
     if (!body.cwd) return NextResponse.json({ error: "cwd required" }, { status: 400 });
     if (!body.action) return NextResponse.json({ error: "action required" }, { status: 400 });
@@ -484,6 +485,9 @@ export async function POST(req: Request) {
     const local = scope === "project";
 
     if (body.action === "install") {
+      if (body.scope !== "global" && body.scope !== "project") {
+        return NextResponse.json({ error: "scope must be global or project" }, { status: 400 });
+      }
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
       if (!isValidPluginSource(source)) {
         return NextResponse.json({ error: "Invalid plugin source format or illegal characters" }, { status: 400 });
@@ -492,6 +496,12 @@ export async function POST(req: Request) {
         if (!isExistingFilePathAllowed(source, allowedRoots)) {
           return NextResponse.json({ error: "Access to local path is denied" }, { status: 403 });
         }
+      }
+      if (scope === "global" && body.confirmCodeExecution !== true) {
+        return NextResponse.json({
+          error: "Global package installation requires confirmation because package lifecycle scripts may execute code",
+          reason: "code-execution-confirmation-required",
+        }, { status: 409 });
       }
       await packageManager.installAndPersist(source, { local });
     } else if (body.action === "remove") {

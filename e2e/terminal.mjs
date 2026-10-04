@@ -42,7 +42,7 @@ const base = `http://127.0.0.1:${port}`;
 const log = createWriteStream(join(artifacts, "server.log"));
 const server = spawn(process.execPath, [join(root, "node_modules/next/dist/bin/next"), "dev", "-H", "127.0.0.1", "-p", String(port)], {
   cwd: root,
-  env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_WEB_PASSWORD: "", NEXT_TELEMETRY_DISABLED: "1", HISTFILE: process.platform === "win32" ? "NUL" : "/dev/null", BASH_SILENCE_DEPRECATION_WARNING: "1", SHELL: process.platform === "win32" ? process.env.SHELL : "/bin/bash" },
+  env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_WEB_HOSTNAME: "127.0.0.1", PI_WEB_PASSWORD: "", NEXT_TELEMETRY_DISABLED: "1", HISTFILE: process.platform === "win32" ? "NUL" : "/dev/null", BASH_SILENCE_DEPRECATION_WARNING: "1", SHELL: process.platform === "win32" ? process.env.SHELL : "/bin/bash" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 server.stdout.pipe(log, { end: false });

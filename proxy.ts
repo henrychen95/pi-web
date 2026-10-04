@@ -13,6 +13,7 @@ import {
   isValidBasicAuthorization,
   isWebPasswordEnabled,
   PI_WEB_SESSION_COOKIE,
+  remoteAccessRefusal,
 } from "@/lib/web-auth";
 
 function tooManyAttempts(retryAfterMs: number): NextResponse {
@@ -37,6 +38,14 @@ export function proxy(request: NextRequest) {
       return new NextResponse("Untrusted request", { status: 403 });
     }
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  }
+
+  const remoteRefusal = remoteAccessRefusal(request);
+  if (remoteRefusal) {
+    return new NextResponse(remoteRefusal.message, {
+      status: remoteRefusal.status,
+      headers: { "Cache-Control": "no-store" },
+    });
   }
 
   const password = process.env.PI_WEB_PASSWORD;

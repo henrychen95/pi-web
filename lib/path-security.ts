@@ -1,4 +1,4 @@
-import { realpathSync } from "fs";
+import { lstatSync, realpathSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 import { isWindowsAbsolutePath } from "./paths";
@@ -64,6 +64,105 @@ export interface PathRestrictionResult {
   reason?: string;
 }
 
+function pathApiFor(target: string): typeof path.posix | typeof path.win32 {
+  return process.platform === "win32" || isWindowsAbsolutePath(target) ? path.win32 : path.posix;
+}
+
+function normalizeWindowsNamespace(value: string): string {
+  if (/^\\\\\?\\UNC\\/i.test(value)) return `\\\\${value.slice(8)}`;
+  if (/^\\\\\?\\[a-zA-Z]:\\/.test(value)) return value.slice(4);
+  if (
+    value.startsWith("\\\\?\\")
+    || value.startsWith("\\\\.\\")
+    || value.startsWith("\\??\\")
+  ) {
+    throw new Error("Windows device paths are not allowed");
+  }
+  return value;
+}
+
+function comparablePath(value: string, resolver: typeof path.posix | typeof path.win32): string {
+  const normalized = resolver === path.win32
+    ? normalizeWindowsNamespace(resolver.resolve(value))
+    : resolver.resolve(value);
+  return resolver === path.win32 ? normalized.toLowerCase() : normalized;
+}
+
+function sameOrWithin(
+  target: string,
+  root: string,
+  resolver: typeof path.posix | typeof path.win32,
+): boolean {
+  const comparableTarget = comparablePath(target, resolver);
+  const comparableRoot = comparablePath(root, resolver);
+  const rootWithSep = comparableRoot.endsWith(resolver.sep)
+    ? comparableRoot
+    : comparableRoot + resolver.sep;
+  return comparableTarget === comparableRoot || comparableTarget.startsWith(rootWithSep);
+}
+
+/**
+ * Resolve links before deciding whether an existing runtime path is sensitive.
+ * Foreign path syntax is kept lexical so cross-platform unit tests can still
+ * exercise Windows rules on Unix and vice versa.
+ */
+function canonicalRestrictionPath(
+  target: string,
+  resolver: typeof path.posix | typeof path.win32,
+): string {
+  const namespaceNormalized = resolver === path.win32 ? normalizeWindowsNamespace(target) : target;
+  const normalized = resolver.resolve(namespaceNormalized);
+  const nativeSyntax = process.platform === "win32"
+    ? resolver === path.win32
+    : resolver === path.posix;
+  if (!nativeSyntax) return resolver === path.win32 ? normalizeWindowsNamespace(normalized) : normalized;
+  try {
+    let canonical: string;
+    if (process.platform === "win32") {
+      try {
+        // The native implementation expands DOS 8.3 aliases, which is needed
+        // before comparing a path with Program Files and other protected roots.
+        canonical = realpathSync.native(normalized);
+      } catch {
+        // Some managed Windows environments deny the native handle query while
+        // Node's regular resolver can still canonicalize the same directory.
+        canonical = realpathSync(normalized);
+      }
+    } else {
+      canonical = realpathSync(normalized);
+    }
+    return resolver === path.win32 ? normalizeWindowsNamespace(canonical) : canonical;
+  } catch (error) {
+    // An existing path whose canonical target cannot be inspected must fail
+    // closed. Missing paths stay lexical so callers can validate prospective
+    // child locations before creating them.
+    try {
+      lstatSync(normalized);
+      throw error;
+    } catch (lstatError) {
+      if (
+        typeof lstatError === "object"
+        && lstatError !== null
+        && "code" in lstatError
+        && lstatError.code !== "ENOENT"
+      ) throw error;
+    }
+    return resolver === path.win32 ? normalizeWindowsNamespace(normalized) : normalized;
+  }
+}
+
+function systemDirectories(isWindows: boolean): string[] {
+  if (isWindows) {
+    return [
+      process.env.SystemRoot || process.env.WINDIR || "C:\\Windows",
+      process.env.ProgramFiles || "C:\\Program Files",
+      process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)",
+      process.env.ProgramData || "C:\\ProgramData",
+    ];
+  }
+  return ["/etc", "/var", "/sys", "/proc", "/dev", "/boot", "/root", "/bin", "/sbin", "/usr"];
+}
+
 export function isRestrictedWorkspaceDirectory(target: string): PathRestrictionResult {
   if (!target) return { restricted: true, reason: "Path is required" };
 
@@ -71,7 +170,7 @@ export function isRestrictedWorkspaceDirectory(target: string): PathRestrictionR
   const resolver = isWindows ? path.win32 : path.posix;
   let normalized: string;
   try {
-    normalized = resolver.resolve(target);
+    normalized = canonicalRestrictionPath(target, resolver);
   } catch {
     return { restricted: true, reason: "Invalid path" };
   }
@@ -86,40 +185,32 @@ export function isRestrictedWorkspaceDirectory(target: string): PathRestrictionR
   }
 
   // 2. User home directory root check
-  const home = resolver.resolve(homedir());
-  const cmpHome = isWindows ? home.toLowerCase() : home;
-  if (cmp === cmpHome) {
-    return { restricted: true, reason: "User home directory cannot be used directly as a workspace" };
+  let home: string;
+  try {
+    home = canonicalRestrictionPath(homedir(), resolver);
+  } catch {
+    // The OS-provided home path is a trusted comparison root. If Windows
+    // denies canonicalization, retain the lexical root instead of allowing the
+    // failure to disable all workspace validation.
+    home = resolver.resolve(homedir());
+  }
+  if (sameOrWithin(home, normalized, resolver)) {
+    return { restricted: true, reason: "A directory containing the user home cannot be used as a workspace" };
   }
 
   // 3. User sensitive subdirectories (~/.ssh, ~/.aws, ~/.gnupg, ~/.azure, ~/.kube, ~/.pi)
   const sensitiveHomeDirs = [".ssh", ".aws", ".gnupg", ".azure", ".kube", ".pi"];
   for (const sub of sensitiveHomeDirs) {
     const full = resolver.resolve(home, sub);
-    const cmpFull = isWindows ? full.toLowerCase() : full;
-    const fullWithSep = cmpFull.endsWith(resolver.sep) ? cmpFull : cmpFull + resolver.sep;
-    if (cmp === cmpFull || cmp.startsWith(fullWithSep)) {
+    if (sameOrWithin(normalized, full, resolver) || sameOrWithin(full, normalized, resolver)) {
       return { restricted: true, reason: `Sensitive directory "${sub}" cannot be used as a workspace` };
     }
   }
 
   // 4. System directories check
-  const systemDirs: string[] = [];
-  if (isWindows) {
-    const sysRoot = process.env.SystemRoot || process.env.WINDIR || "C:\\Windows";
-    const progFiles = process.env.ProgramFiles || "C:\\Program Files";
-    const progFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
-    const progData = process.env.ProgramData || "C:\\ProgramData";
-    systemDirs.push(sysRoot, progFiles, progFilesX86, progData);
-  } else {
-    systemDirs.push("/etc", "/var", "/sys", "/proc", "/dev", "/boot", "/root", "/bin", "/sbin", "/usr");
-  }
-
-  for (const sysDir of systemDirs) {
+  for (const sysDir of systemDirectories(isWindows)) {
     const resolvedSys = resolver.resolve(sysDir);
-    const cmpSys = isWindows ? resolvedSys.toLowerCase() : resolvedSys;
-    const sysWithSep = cmpSys.endsWith(resolver.sep) ? cmpSys : cmpSys + resolver.sep;
-    if (cmp === cmpSys || cmp.startsWith(sysWithSep)) {
+    if (sameOrWithin(normalized, resolvedSys, resolver) || sameOrWithin(resolvedSys, normalized, resolver)) {
       return { restricted: true, reason: `System directory "${sysDir}" cannot be used as a workspace` };
     }
   }
@@ -134,7 +225,7 @@ export function isRestrictedBrowseDirectory(target: string): PathRestrictionResu
   const resolver = isWindows ? path.win32 : path.posix;
   let normalized: string;
   try {
-    normalized = resolver.resolve(target);
+    normalized = canonicalRestrictionPath(target, resolver);
   } catch {
     return { restricted: true, reason: "Invalid path" };
   }
@@ -154,18 +245,7 @@ export function isRestrictedBrowseDirectory(target: string): PathRestrictionResu
   }
 
   // Browsing into system directories is forbidden
-  const systemDirs: string[] = [];
-  if (isWindows) {
-    const sysRoot = process.env.SystemRoot || process.env.WINDIR || "C:\\Windows";
-    const progFiles = process.env.ProgramFiles || "C:\\Program Files";
-    const progFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
-    const progData = process.env.ProgramData || "C:\\ProgramData";
-    systemDirs.push(sysRoot, progFiles, progFilesX86, progData);
-  } else {
-    systemDirs.push("/etc", "/var", "/sys", "/proc", "/dev", "/boot", "/root", "/bin", "/sbin", "/usr");
-  }
-
-  for (const sysDir of systemDirs) {
+  for (const sysDir of systemDirectories(isWindows)) {
     const resolvedSys = resolver.resolve(sysDir);
     const cmpSys = isWindows ? resolvedSys.toLowerCase() : resolvedSys;
     const sysWithSep = cmpSys.endsWith(resolver.sep) ? cmpSys : cmpSys + resolver.sep;
@@ -177,3 +257,42 @@ export function isRestrictedBrowseDirectory(target: string): PathRestrictionResu
   return { restricted: false };
 }
 
+/**
+ * The directory picker may browse inside the home folder and existing allowed
+ * roots. It may also traverse ancestors needed to reach one of those places,
+ * but writes are limited to the places themselves.
+ */
+export function isBrowseDirectoryAllowed(
+  target: string,
+  allowedRoots: Set<string>,
+  options: { write?: boolean } = {},
+): PathRestrictionResult {
+  const restricted = isRestrictedBrowseDirectory(target);
+  if (restricted.restricted) return restricted;
+
+  const resolver = pathApiFor(target);
+  let canonicalTarget: string;
+  try {
+    canonicalTarget = canonicalRestrictionPath(target, resolver);
+  } catch {
+    return { restricted: true, reason: "Invalid path" };
+  }
+
+  const destinations: string[] = [];
+  for (const entry of [homedir(), ...allowedRoots]) {
+    try {
+      const canonical = canonicalRestrictionPath(entry, pathApiFor(entry));
+      if (pathApiFor(canonical) === resolver) destinations.push(canonical);
+    } catch {
+      // Ignore stale or inaccessible roots instead of widening browse scope.
+    }
+  }
+
+  if (destinations.some((destination) => sameOrWithin(canonicalTarget, destination, resolver))) {
+    return { restricted: false };
+  }
+  if (!options.write && destinations.some((destination) => sameOrWithin(destination, canonicalTarget, resolver))) {
+    return { restricted: false };
+  }
+  return { restricted: true, reason: "Directory is outside the browsable workspace scope" };
+}

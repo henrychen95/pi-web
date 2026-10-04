@@ -24,9 +24,12 @@ export function getAdditionalAllowedRoots(): Set<string> {
   return globalThis.__piAdditionalAllowedRoots;
 }
 
-export function allowFileRoot(root: string): void {
-  if (!root) return;
-  if (isRestrictedWorkspaceDirectory(root).restricted) return;
+export function allowFileRoot(root: string, options: { allowRestricted?: boolean } = {}): void {
+  if (!root) throw new Error("File root is required");
+  const restriction = isRestrictedWorkspaceDirectory(root);
+  if (restriction.restricted && !options.allowRestricted) {
+    throw new Error(restriction.reason || "This directory cannot be used as a file root");
+  }
   const normalizedRoot = normalizeSlashes(root);
   getAdditionalAllowedRoots().add(normalizedRoot);
   globalThis.__piAllowedRootsCache?.roots.add(normalizedRoot);

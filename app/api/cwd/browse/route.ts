@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stat } from "fs/promises";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
-import { isRestrictedBrowseDirectory } from "@/lib/path-security";
+import { getAllowedFileRoots } from "@/lib/file-access";
+import { isBrowseDirectoryAllowed } from "@/lib/path-security";
 import {
   createDirectory,
   getBrowseStartDirectory,
@@ -20,12 +21,13 @@ export async function GET(request: NextRequest) {
 
   try {
     const requested = request.nextUrl.searchParams.get("path")?.trim();
+    const allowedRoots = await getAllowedFileRoots();
 
     if (shouldShowWindowsDrivePicker(requested)) {
       return NextResponse.json({
         path: "",
         parentPath: null,
-        drives: await listWindowsDrives(),
+        drives: await listWindowsDrives(allowedRoots),
         directories: [],
       });
     }
@@ -39,7 +41,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Directory does not exist" }, { status: 404 });
     }
 
-    const restriction = isRestrictedBrowseDirectory(resolved);
+    const restriction = isBrowseDirectoryAllowed(resolved, allowedRoots);
     if (restriction.restricted) {
       return NextResponse.json({ error: restriction.reason || "Access to directory is restricted" }, { status: 403 });
     }
@@ -49,7 +51,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Path is not a directory" }, { status: 400 });
     }
 
-    const directories = await listDirectories(resolved);
+    const directories = await listDirectories(resolved, allowedRoots);
 
     return NextResponse.json({
       path: resolved,
@@ -83,7 +85,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Directory name is required" }, { status: 400 });
     }
 
-    const createdPath = await createDirectory(parentPath, name);
+    const allowedRoots = await getAllowedFileRoots();
+    let resolvedParent: string;
+    try {
+      resolvedParent = await resolveDirectory(parentPath);
+    } catch {
+      return NextResponse.json({ error: "Parent directory does not exist" }, { status: 404 });
+    }
+    const restriction = isBrowseDirectoryAllowed(resolvedParent, allowedRoots, { write: true });
+    if (restriction.restricted) {
+      return NextResponse.json({ error: restriction.reason || "Access to directory is restricted" }, { status: 403 });
+    }
+
+    const createdPath = await createDirectory(resolvedParent, name);
     return NextResponse.json({ success: true, path: createdPath });
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error

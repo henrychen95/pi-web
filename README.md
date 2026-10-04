@@ -51,6 +51,8 @@ For port and hostname, command-line options override the corresponding environme
 | `PI_WEB_SKIP_VERSION_CHECK=1` | Disable Pi Web update checks | Unset |
 | `PI_WEB_ALLOWED_HOSTS` | Additional exact proxy or custom hostnames, comma-separated | Unset |
 | `PI_WEB_PASSWORD` | Enable browser password login; API clients may use Basic Auth with username `pi` | Authentication disabled |
+| `PI_WEB_TRUST_PROXY=1` | Trust `X-Forwarded-Proto` from the HTTPS reverse proxy in front of Pi Web | Unset |
+| `PI_WEB_ALLOW_INSECURE_LAN=1` | Explicitly allow non-loopback plaintext HTTP, including trusted VPN setups whose transport Pi Web cannot detect | Unset |
 | `PI_WEB_IDLE_TIMEOUT_MS` | Session idle timeout in milliseconds, up to `2147483647`; `0` disables idle shutdown; invalid or out-of-range values use the default | `600000` (10 min) |
 | `PI_WEB_SHUTDOWN_DEADLINE_MS` | How long extensions get to handle `session_shutdown` before a closing session is disposed anyway, in milliseconds up to `2147483647`; `0`, invalid or out-of-range values use the default | `5000` (5 s) |
 
@@ -63,17 +65,21 @@ pi-web -p 8080 -H 0.0.0.0 --no-open
 
 ### Remote Access
 
-Binding to a non-loopback address exposes an agent that can execute high-privilege actions. On a trusted LAN, require a long random password:
+Binding to a non-loopback address exposes an agent that can execute high-privilege actions. Pi Web refuses remote plaintext password login by default. Put it behind an HTTPS reverse proxy, have the proxy set `X-Forwarded-Proto: https`, and explicitly trust that proxy:
 
 ```bash
-PI_WEB_PASSWORD='a-long-random-password' pi-web --hostname 0.0.0.0
+PI_WEB_PASSWORD='a-long-random-password' \
+PI_WEB_TRUST_PROXY=1 \
+pi-web --hostname 127.0.0.1 --no-open
 ```
 
-Password authentication does not encrypt the connection. Do not expose Pi Web over plain HTTP to the internet; use HTTPS through a trusted reverse proxy or a trusted VPN. If a reverse proxy sends an external hostname, add that exact name to `PI_WEB_ALLOWED_HOSTS`. This allow-list does not change the address Pi Web binds to.
+Keep the loopback binding so clients cannot spoof the proxy's HTTPS header by connecting to Pi Web directly. The `dev:lan` and `start:lan` scripts use the same gate and therefore require the explicit plaintext override below. If a trusted VPN encrypts traffic outside the HTTP layer, set both a long password and `PI_WEB_ALLOW_INSECURE_LAN=1` to acknowledge that Pi Web cannot verify the tunnel. This override also permits unauthenticated LAN access when no password is set, so keep it limited to an isolated trusted network. If a reverse proxy sends an external hostname, add that exact name to `PI_WEB_ALLOWED_HOSTS`. This allow-list does not change the address Pi Web binds to.
 
 ### HTTP Proxy
 
 Server-side model and API requests honor the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables.
+
+Settings › Models discovery and connection tests deliberately connect through a DNS-validating direct transport and do not use these proxy variables. This prevents a proxy-side DNS resolution from bypassing the private-address check.
 
 On macOS or Linux:
 

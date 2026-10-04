@@ -1,7 +1,7 @@
 import { mkdir, readdir, realpath, stat } from "fs/promises";
 import { homedir } from "os";
 import path from "path";
-import { isRestrictedBrowseDirectory } from "./path-security";
+import { isBrowseDirectoryAllowed } from "./path-security";
 
 export interface BrowsableDirectory {
   name: string;
@@ -26,11 +26,13 @@ export function getWindowsDriveCandidates(): BrowsableDirectory[] {
   }));
 }
 
-export async function listWindowsDrives(): Promise<BrowsableDirectory[]> {
+export async function listWindowsDrives(allowedRoots?: Set<string>): Promise<BrowsableDirectory[]> {
   const candidates = await Promise.all(getWindowsDriveCandidates().map(async (drive) => {
     try {
       const driveStat = await stat(drive.path);
-      return driveStat.isDirectory() ? drive : null;
+      if (!driveStat.isDirectory()) return null;
+      if (allowedRoots && isBrowseDirectoryAllowed(drive.path, allowedRoots).restricted) return null;
+      return drive;
     } catch {
       return null;
     }
@@ -77,12 +79,15 @@ export async function createDirectory(parentDirectory: string, name: string): Pr
   return realpath(createdPath);
 }
 
-export async function listDirectories(directory: string): Promise<BrowsableDirectory[]> {
+export async function listDirectories(
+  directory: string,
+  allowedRoots: Set<string> = new Set([directory]),
+): Promise<BrowsableDirectory[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   // 忽略损坏、不可访问或不指向目录的符号链接。
   const candidates = await Promise.all(entries.map(async (entry) => {
     const entryPath = path.join(directory, entry.name);
-    if (isRestrictedBrowseDirectory(entryPath).restricted) return null;
+    if (isBrowseDirectoryAllowed(entryPath, allowedRoots).restricted) return null;
 
     if (entry.isDirectory()) {
       return { name: entry.name, path: entryPath };
@@ -93,7 +98,7 @@ export async function listDirectories(directory: string): Promise<BrowsableDirec
       const realEntryPath = await realpath(entryPath);
       const entryStat = await stat(realEntryPath);
       if (!entryStat.isDirectory()) return null;
-      if (isRestrictedBrowseDirectory(realEntryPath).restricted) return null;
+      if (isBrowseDirectoryAllowed(realEntryPath, allowedRoots).restricted) return null;
       return { name: entry.name, path: entryPath };
     } catch {
       return null;

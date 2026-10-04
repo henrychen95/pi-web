@@ -31,11 +31,17 @@ function put(body) {
   });
 }
 
+function get() {
+  return new Request("http://localhost/api/models-config", {
+    headers: { Host: "localhost" },
+  });
+}
+
 test("a models.json with a syntax error is reported instead of read as empty, and a save cannot replace it", async () => {
   const original = '{ "providers": { "acme": { "models": [ } } }';
   await writeFile(modelsPath, original);
 
-  let response = await GET();
+  let response = await GET(get());
   assert.equal(response.status, 422);
   assert.match((await response.json()).error, /models\.json/);
 
@@ -48,7 +54,27 @@ test("a models.json with a syntax error is reported instead of read as empty, an
 test("a commented models.json loads with its providers", async () => {
   await writeFile(modelsPath, '{\n  // local models\n  "providers": { "acme": { "models": [{ "id": "a" },] } },\n}\n');
 
-  const response = await GET();
+  const response = await GET(get());
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { providers: { acme: { models: [{ id: "a" }] } } });
+});
+
+test("provider rename envelopes preserve secrets that the browser only saw masked", async () => {
+  await writeFile(modelsPath, JSON.stringify({
+    providers: { oldName: { apiKey: "super-secret-key", models: [{ id: "a" }] } },
+  }));
+
+  const loaded = await GET(get());
+  const masked = await loaded.json();
+  assert.notEqual(masked.providers.oldName.apiKey, "super-secret-key");
+
+  const response = await PUT(put({
+    config: { providers: { newName: masked.providers.oldName } },
+    providerRenames: [{ from: "oldName", to: "newName" }],
+  }));
+  assert.equal(response.status, 200);
+
+  const saved = JSON.parse(await readFile(modelsPath, "utf8"));
+  assert.equal(saved.providers.newName.apiKey, "super-secret-key");
+  assert.equal(saved.providers.oldName, undefined);
 });

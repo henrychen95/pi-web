@@ -26,6 +26,12 @@ const {
 } = await jiti.import("../../../lib/session-reader.ts");
 const { SessionManager } = await jiti.import("@earendil-works/pi-coding-agent");
 
+function apiRequest(input, init = {}) {
+  const headers = new Headers(init.headers);
+  if (!headers.has("host")) headers.set("host", "localhost");
+  return new Request(input, { ...init, headers });
+}
+
 test("list versions expose idle session creation, rename and deletion to other windows", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-list-sync-"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -40,7 +46,7 @@ test("list versions expose idle session creation, rename and deletion to other w
     await rm(dir, { recursive: true, force: true });
   });
   const list = async () => {
-    const response = await getSessionList(new Request("http://localhost/api/sessions"));
+    const response = await getSessionList(apiRequest("http://localhost/api/sessions"));
     assert.equal(response.status, 200);
     return response.json();
   };
@@ -59,7 +65,11 @@ test("list versions expose idle session creation, rename and deletion to other w
 
   const context = { params: Promise.resolve({ id: sessionId }) };
   const url = `http://localhost/api/sessions/${sessionId}`;
-  const renamed = await renameSession(new Request(url, { method: "PATCH", body: JSON.stringify({ name: "Renamed elsewhere" }) }), context);
+  const renamed = await renameSession(apiRequest(url, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "Renamed elsewhere" }),
+  }), context);
   assert.equal(renamed.status, 200);
   const poll = await (await getRunningSessions()).json();
   assert.deepEqual(poll.runningSessionIds, []);
@@ -69,7 +79,7 @@ test("list versions expose idle session creation, rename and deletion to other w
   assert.equal(updated.sessions[0].name, "Renamed elsewhere");
   assert.equal((await list()).sessionListVersion, poll.sessionListVersion, "reads must not create a refresh loop");
 
-  assert.equal((await deleteSession(new Request(url, { method: "DELETE" }), context)).status, 200);
+  assert.equal((await deleteSession(apiRequest(url, { method: "DELETE" }), context)).status, 200);
   const deleted = await list();
   assert.ok(deleted.sessionListVersion > updated.sessionListVersion);
   assert.deepEqual(deleted.sessions, []);
@@ -94,7 +104,7 @@ test("session listing returns a gzip-compressed response when the client accepts
   manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "done" }], timestamp: Date.now() });
   invalidateSessionListCache();
 
-  const response = await getSessionList(new Request("http://localhost/api/sessions", {
+  const response = await getSessionList(apiRequest("http://localhost/api/sessions", {
     headers: { "Accept-Encoding": "gzip" },
   }));
 
@@ -135,7 +145,7 @@ test("deleting an unpersisted session shuts down its runtime and invalidates cac
     });
     const before = (await (await getRunningSessions()).json()).sessionListVersion;
     const response = await deleteSession(
-      new Request(`http://localhost/api/sessions/${id}`, { method: "DELETE" }),
+      apiRequest(`http://localhost/api/sessions/${id}`, { method: "DELETE" }),
       { params: Promise.resolve({ id }) },
     );
 
@@ -248,7 +258,7 @@ test("deleting a session removes all persisted subagent descendants", async (t) 
   });
 
   const response = await deleteSession(
-    new Request(`http://localhost/api/sessions/${parentId}`, { method: "DELETE" }),
+    apiRequest(`http://localhost/api/sessions/${parentId}`, { method: "DELETE" }),
     { params: Promise.resolve({ id: parentId }) },
   );
 
@@ -292,11 +302,11 @@ test("live detail and state routes work without a persisted JSONL file", async (
 
   const routeContext = { params: Promise.resolve({ id }) };
   const detailResponse = await getSessionDetail(
-    new Request(`http://localhost/api/sessions/${id}`),
+    apiRequest(`http://localhost/api/sessions/${id}`),
     routeContext,
   );
   const stateResponse = await getSessionState(
-    new Request(`http://localhost/api/sessions/${id}/state`),
+    apiRequest(`http://localhost/api/sessions/${id}/state`),
     routeContext,
   );
   const detail = await detailResponse.json();
@@ -346,7 +356,7 @@ test("session detail returns a gzip-compressed response when the client accepts 
   });
 
   const response = await getSessionDetail(
-    new Request(`http://localhost/api/sessions/${id}`, {
+    apiRequest(`http://localhost/api/sessions/${id}`, {
       headers: { "Accept-Encoding": "gzip" },
     }),
     { params: Promise.resolve({ id }) },

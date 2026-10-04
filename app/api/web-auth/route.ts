@@ -12,16 +12,12 @@ import {
   isValidWebPassword,
   isValidWebSessionToken,
   isWebPasswordEnabled,
+  isSecureWebRequest,
   PI_WEB_SESSION_COOKIE,
   PI_WEB_SESSION_MAX_AGE,
 } from "@/lib/web-auth";
 
 export const dynamic = "force-dynamic";
-
-function isSecureRequest(request: Request): boolean {
-  return new URL(request.url).protocol === "https:"
-    || request.headers.get("x-forwarded-proto")?.split(",", 1)[0]?.trim() === "https";
-}
 
 function tooManyAttempts(retryAfterMs: number): NextResponse {
   return NextResponse.json(
@@ -42,7 +38,7 @@ function clearSessionCookie(response: NextResponse, request: Request): void {
     value: "",
     httpOnly: true,
     sameSite: "strict",
-    secure: isSecureRequest(request),
+    secure: isSecureWebRequest(request),
     path: "/",
     maxAge: 0,
   });
@@ -99,7 +95,7 @@ export async function POST(request: NextRequest) {
     value: createWebSessionToken(password),
     httpOnly: true,
     sameSite: "strict",
-    secure: isSecureRequest(request),
+    secure: isSecureWebRequest(request),
     path: "/",
     maxAge: PI_WEB_SESSION_MAX_AGE,
   });

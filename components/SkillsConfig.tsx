@@ -310,13 +310,15 @@ function AddSkillPanel({
 
   const install = useCallback(
     async (pkg: string) => {
+      const confirmCodeExecution = scope === "global";
+      if (confirmCodeExecution && !window.confirm(t("plugins.globalInstallConfirm"))) return;
       setInstalling(pkg);
       setInstallError(null);
       try {
         const res = await fetch("/api/skills/install", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ package: pkg, scope, cwd }),
+          body: JSON.stringify({ package: pkg, scope, cwd, confirmCodeExecution }),
         });
         const d = (await res.json()) as { success?: boolean; error?: string };
         if (!res.ok || d.error) {
@@ -333,7 +335,7 @@ function AddSkillPanel({
         setInstalling(null);
       }
     },
-    [onInstalled, scope, cwd],
+    [onInstalled, scope, cwd, t],
   );
 
   const installPath =
