@@ -1,5 +1,16 @@
 # Pi Web - Development Notes
 
+> **專案追蹤與紀錄 (ClickUp & Antigravity)**
+> - **ClickUp Space ID**: `901813702618`
+> - **ClickUp Folder ID**: `901817422563`
+> - **ClickUp List ID**: `901821843945` (`pi-web`)
+> - **主任務**: [CU-86eyzdxt3 [Security Audit] agegr/pi-web 安全審計](https://app.clickup.com/t/86eyzdxt3)
+> - **對話歷程索引**: [2026-10 安全審計與 v0.10.0 更新檢驗對話](conversation://154fb359-7458-406e-bb56-b401b02ef5e5)
+> - **安全審計報告**: [docs/security/2026-10-security-audit.md](file:///D:/Tools/pi-web/docs/security/2026-10-security-audit.md)
+> - **v0.10.0 更新檢驗**: [docs/security/v0.10.0-mcp-update-analysis.md](file:///D:/Tools/pi-web/docs/security/v0.10.0-mcp-update-analysis.md)
+
+---
+
 ## Quick Start
 
 ```bash

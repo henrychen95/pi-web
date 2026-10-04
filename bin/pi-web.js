@@ -10,6 +10,8 @@ if (!isNodeVersionSupported(process.versions.node)) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const crypto = require("crypto");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { spawn } = require("child_process");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const path = require("path");
@@ -59,7 +61,7 @@ try {
 }
 
 const loopbackHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
-const passwordEnabled = Boolean(process.env.PI_WEB_PASSWORD);
+let activePassword = process.env.PI_WEB_PASSWORD;
 
 if (!fs.existsSync(nextDir)) {
   console.error("Build artifacts not found. Please report this issue.");
@@ -67,14 +69,25 @@ if (!fs.existsSync(nextDir)) {
 }
 
 if (!loopbackHostnames.has(hostname)) {
-  if (passwordEnabled) {
+  if (activePassword) {
     console.warn(
       `Warning: pi-web is listening on ${hostname} with password authentication over HTTP. Use HTTPS or a trusted VPN to protect the password in transit.`,
     );
-  } else {
+  } else if (process.env.PI_WEB_ALLOW_INSECURE_LAN === "1") {
     console.warn(
-      `Warning: pi-web is listening on ${hostname} without authentication. Only use this on a trusted network.`,
+      `Warning: pi-web is listening on ${hostname} without authentication (PI_WEB_ALLOW_INSECURE_LAN=1). Only use this on a trusted network.`,
     );
+  } else {
+    activePassword = crypto.randomBytes(16).toString("hex");
+    console.warn(`================================================================================`);
+    console.warn(`[Security Alert] pi-web is listening on non-loopback address "${hostname}"!`);
+    console.warn(`[Security Alert] To protect your system from unauthenticated remote code execution,`);
+    console.warn(`[Security Alert] a temporary access password has been generated:`);
+    console.warn(``);
+    console.warn(`    Password: ${activePassword}`);
+    console.warn(``);
+    console.warn(`Please enter this password on login, or set PI_WEB_PASSWORD in your environment.`);
+    console.warn(`================================================================================`);
   }
 }
 
@@ -86,7 +99,11 @@ nextArgs.push("-H", hostname);
 const child = spawn(process.execPath, getNextNodeArgs(nextBin, nextArgs), {
   cwd: pkgDir,
   stdio: ["inherit", "pipe", "inherit"],
-  env: { ...process.env, PI_WEB_HOSTNAME: hostname },
+  env: {
+    ...process.env,
+    PI_WEB_HOSTNAME: hostname,
+    ...(activePassword ? { PI_WEB_PASSWORD: activePassword } : {}),
+  },
 });
 wireChildProcessLifecycle(child);
 

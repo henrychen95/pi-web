@@ -2,7 +2,9 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 
 export const PI_WEB_AUTH_USERNAME = "pi";
 export const PI_WEB_SESSION_COOKIE = "pi_web_session";
-export const PI_WEB_SESSION_MAX_AGE = 60 * 60 * 24 * 30;
+export const PI_WEB_SESSION_MAX_AGE = process.env.PI_WEB_SESSION_MAX_AGE_SEC
+  ? Number(process.env.PI_WEB_SESSION_MAX_AGE_SEC)
+  : 60 * 60 * 24 * 7;
 
 function hashSecret(value: string): Buffer {
   return createHash("sha256").update(value, "utf8").digest();

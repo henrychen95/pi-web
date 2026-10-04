@@ -4,6 +4,7 @@ import { runNpx } from "@/lib/npx";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { getProjectTrustStatus } from "@/lib/project-trust";
+import { isValidSkillPackageName } from "@/lib/package-security";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,11 @@ export async function POST(req: Request) {
 
   try {
     const { package: pkg, scope, cwd } = await req.json() as { package?: string; scope?: string; cwd?: string };
-    if (!pkg?.trim()) return NextResponse.json({ error: "package required" }, { status: 400 });
+    const trimmedPkg = (pkg ?? "").trim();
+    if (!trimmedPkg) return NextResponse.json({ error: "package required" }, { status: 400 });
+    if (!isValidSkillPackageName(trimmedPkg)) {
+      return NextResponse.json({ error: "Invalid package name or dangerous characters detected" }, { status: 400 });
+    }
 
     const isGlobal = scope !== "project";
     if (!isGlobal) {
@@ -36,7 +41,7 @@ export async function POST(req: Request) {
         );
       }
     }
-    const args = ["skills", "add", pkg.trim(), "-y", "--agent", "pi"];
+    const args = ["skills", "add", trimmedPkg, "-y", "--agent", "pi"];
     if (isGlobal) args.push("-g");
 
     console.log(`[skills/install] running: npx ${args.join(" ")}`);

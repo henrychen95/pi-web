@@ -1,3 +1,4 @@
+import { isRestrictedWorkspaceDirectory } from "./path-security";
 import { toSlashPath } from "./paths";
 
 // In-memory roots that should be browsable in addition to roots derived from
@@ -25,6 +26,7 @@ export function getAdditionalAllowedRoots(): Set<string> {
 
 export function allowFileRoot(root: string): void {
   if (!root) return;
+  if (isRestrictedWorkspaceDirectory(root).restricted) return;
   const normalizedRoot = normalizeSlashes(root);
   getAdditionalAllowedRoots().add(normalizedRoot);
   globalThis.__piAllowedRootsCache?.roots.add(normalizedRoot);

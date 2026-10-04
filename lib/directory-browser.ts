@@ -1,6 +1,7 @@
 import { mkdir, readdir, realpath, stat } from "fs/promises";
 import { homedir } from "os";
 import path from "path";
+import { isRestrictedBrowseDirectory } from "./path-security";
 
 export interface BrowsableDirectory {
   name: string;
@@ -80,16 +81,19 @@ export async function listDirectories(directory: string): Promise<BrowsableDirec
   const entries = await readdir(directory, { withFileTypes: true });
   // 忽略损坏、不可访问或不指向目录的符号链接。
   const candidates = await Promise.all(entries.map(async (entry) => {
+    const entryPath = path.join(directory, entry.name);
+    if (isRestrictedBrowseDirectory(entryPath).restricted) return null;
+
     if (entry.isDirectory()) {
-      return { name: entry.name, path: path.join(directory, entry.name) };
+      return { name: entry.name, path: entryPath };
     }
     if (!entry.isSymbolicLink()) return null;
 
     try {
-      const entryPath = path.join(directory, entry.name);
       const realEntryPath = await realpath(entryPath);
       const entryStat = await stat(realEntryPath);
       if (!entryStat.isDirectory()) return null;
+      if (isRestrictedBrowseDirectory(realEntryPath).restricted) return null;
       return { name: entry.name, path: entryPath };
     } catch {
       return null;

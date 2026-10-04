@@ -5,6 +5,7 @@ import { join } from "path";
 import { completeSimple, type AssistantMessage } from "@earendil-works/pi-ai/compat";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { isSafeModelUrl } from "@/lib/ssrf-protection";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,14 @@ export async function POST(req: Request) {
 
     const modelId = typeof body.model.id === "string" ? body.model.id.trim() : "";
     if (!modelId) return NextResponse.json({ ok: false, error: "Model ID is required" }, { status: 400 });
+
+    const configuredBaseUrl = typeof body.provider.baseUrl === "string" ? body.provider.baseUrl.trim() : "";
+    if (configuredBaseUrl) {
+      const safety = isSafeModelUrl(configuredBaseUrl);
+      if (!safety.safe) {
+        return NextResponse.json({ ok: false, error: safety.reason || "Base URL is not allowed" }, { status: 400 });
+      }
+    }
 
     tempDir = mkdtempSync(join(tmpdir(), "pi-web-model-test-"));
     const modelsPath = join(tempDir, "models.json");

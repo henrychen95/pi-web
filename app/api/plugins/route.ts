@@ -13,6 +13,7 @@ import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-acces
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { getProjectTrustStatus } from "@/lib/project-trust";
 import { isPluginSourceCheckable } from "@/lib/plugin-updates";
+import { isValidPluginSource } from "@/lib/package-security";
 import type {
   PluginDiagnostic,
   PluginPackageInfo,
@@ -484,6 +485,14 @@ export async function POST(req: Request) {
 
     if (body.action === "install") {
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
+      if (!isValidPluginSource(source)) {
+        return NextResponse.json({ error: "Invalid plugin source format or illegal characters" }, { status: 400 });
+      }
+      if (/^(\.{1,2}[\\/]|[a-zA-Z]:[\\/]|(?!\/)[a-zA-Z0-9_.-]+[\\/])/.test(source) || source.startsWith("/")) {
+        if (!isExistingFilePathAllowed(source, allowedRoots)) {
+          return NextResponse.json({ error: "Access to local path is denied" }, { status: 403 });
+        }
+      }
       await packageManager.installAndPersist(source, { local });
     } else if (body.action === "remove") {
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });

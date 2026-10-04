@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { resolveModelDiscoveryAuth } from "@/lib/model-discovery-auth";
 import { buildModelsListUrl, parseDiscoveredModels } from "@/lib/model-discovery";
+import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { isSafeModelUrl } from "@/lib/ssrf-protection";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +33,13 @@ function buildHeaders(api: string, apiKey: string | undefined, configured: Recor
 }
 
 export async function POST(req: Request) {
+  if (!isApiRequestAllowed(req)) {
+    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  }
+  if (!hasJsonContentType(req)) {
+    return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
+  }
+
   try {
     const body = await req.json() as { providerName?: unknown; provider?: unknown };
     const providerName = typeof body.providerName === "string" ? body.providerName.trim() : "";
@@ -57,6 +66,10 @@ export async function POST(req: Request) {
     // that only list models, do not have to repeat the upstream base URL.
     const baseUrl = configuredBaseUrl || auth.baseUrl || "";
     if (!baseUrl) return NextResponse.json({ error: "Base URL is required" }, { status: 400 });
+    const safety = isSafeModelUrl(baseUrl);
+    if (!safety.safe) {
+      return NextResponse.json({ error: safety.reason || "Base URL is not allowed" }, { status: 400 });
+    }
     const api = configuredApi || auth.api || "openai-completions";
 
     let endpoint: URL;

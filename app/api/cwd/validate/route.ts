@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { statSync, type Stats } from "fs";
 import { homedir } from "os";
 import { isAbsolute, resolve } from "path";
+import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { isRestrictedWorkspaceDirectory } from "@/lib/path-security";
 import { allowFileRoot } from "@/lib/file-access";
 import { projectIdentityKey } from "@/lib/project-identity";
 import { resolveProject } from "@/lib/worktree";
@@ -15,6 +17,13 @@ function normalizeCwd(cwd: string): string {
 // POST /api/cwd/validate  body: { cwd: string }
 // Validates a candidate workspace before the UI selects it.
 export async function POST(req: Request) {
+  if (!isApiRequestAllowed(req)) {
+    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  }
+  if (!hasJsonContentType(req)) {
+    return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
+  }
+
   try {
     const body = await req.json() as { cwd?: unknown };
     const cwd = typeof body.cwd === "string" ? body.cwd.trim() : "";
@@ -24,6 +33,11 @@ export async function POST(req: Request) {
     }
 
     const normalizedCwd = normalizeCwd(cwd);
+    const restriction = isRestrictedWorkspaceDirectory(normalizedCwd);
+    if (restriction.restricted) {
+      return NextResponse.json({ error: restriction.reason || "This directory cannot be used as a workspace" }, { status: 400 });
+    }
+
     let stat: Stats;
     try {
       stat = statSync(normalizedCwd);

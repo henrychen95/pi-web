@@ -1,4 +1,5 @@
 import { realpathSync } from "fs";
+import { homedir } from "os";
 import path from "path";
 import { isWindowsAbsolutePath } from "./paths";
 
@@ -57,3 +58,122 @@ export function isExistingPathWithinRoots(target: string, roots: Set<string>): b
   }
   return isPathWithinRoots(realTarget, resolveRealRoots(roots));
 }
+
+export interface PathRestrictionResult {
+  restricted: boolean;
+  reason?: string;
+}
+
+export function isRestrictedWorkspaceDirectory(target: string): PathRestrictionResult {
+  if (!target) return { restricted: true, reason: "Path is required" };
+
+  const isWindows = process.platform === "win32" || isWindowsAbsolutePath(target);
+  const resolver = isWindows ? path.win32 : path.posix;
+  let normalized: string;
+  try {
+    normalized = resolver.resolve(target);
+  } catch {
+    return { restricted: true, reason: "Invalid path" };
+  }
+
+  const parsed = resolver.parse(normalized);
+  const cmp = isWindows ? normalized.toLowerCase() : normalized;
+  const cmpRoot = isWindows ? parsed.root.toLowerCase() : parsed.root;
+
+  // 1. Filesystem root check (/ or C:\ or \\server\share)
+  if (cmp === cmpRoot || cmp === "/" || /^[a-zA-Z]:[\\/]?$/.test(normalized)) {
+    return { restricted: true, reason: "Filesystem root cannot be used as a workspace" };
+  }
+
+  // 2. User home directory root check
+  const home = resolver.resolve(homedir());
+  const cmpHome = isWindows ? home.toLowerCase() : home;
+  if (cmp === cmpHome) {
+    return { restricted: true, reason: "User home directory cannot be used directly as a workspace" };
+  }
+
+  // 3. User sensitive subdirectories (~/.ssh, ~/.aws, ~/.gnupg, ~/.azure, ~/.kube, ~/.pi)
+  const sensitiveHomeDirs = [".ssh", ".aws", ".gnupg", ".azure", ".kube", ".pi"];
+  for (const sub of sensitiveHomeDirs) {
+    const full = resolver.resolve(home, sub);
+    const cmpFull = isWindows ? full.toLowerCase() : full;
+    const fullWithSep = cmpFull.endsWith(resolver.sep) ? cmpFull : cmpFull + resolver.sep;
+    if (cmp === cmpFull || cmp.startsWith(fullWithSep)) {
+      return { restricted: true, reason: `Sensitive directory "${sub}" cannot be used as a workspace` };
+    }
+  }
+
+  // 4. System directories check
+  const systemDirs: string[] = [];
+  if (isWindows) {
+    const sysRoot = process.env.SystemRoot || process.env.WINDIR || "C:\\Windows";
+    const progFiles = process.env.ProgramFiles || "C:\\Program Files";
+    const progFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    const progData = process.env.ProgramData || "C:\\ProgramData";
+    systemDirs.push(sysRoot, progFiles, progFilesX86, progData);
+  } else {
+    systemDirs.push("/etc", "/var", "/sys", "/proc", "/dev", "/boot", "/root", "/bin", "/sbin", "/usr");
+  }
+
+  for (const sysDir of systemDirs) {
+    const resolvedSys = resolver.resolve(sysDir);
+    const cmpSys = isWindows ? resolvedSys.toLowerCase() : resolvedSys;
+    const sysWithSep = cmpSys.endsWith(resolver.sep) ? cmpSys : cmpSys + resolver.sep;
+    if (cmp === cmpSys || cmp.startsWith(sysWithSep)) {
+      return { restricted: true, reason: `System directory "${sysDir}" cannot be used as a workspace` };
+    }
+  }
+
+  return { restricted: false };
+}
+
+export function isRestrictedBrowseDirectory(target: string): PathRestrictionResult {
+  if (!target) return { restricted: false };
+
+  const isWindows = process.platform === "win32" || isWindowsAbsolutePath(target);
+  const resolver = isWindows ? path.win32 : path.posix;
+  let normalized: string;
+  try {
+    normalized = resolver.resolve(target);
+  } catch {
+    return { restricted: true, reason: "Invalid path" };
+  }
+
+  const cmp = isWindows ? normalized.toLowerCase() : normalized;
+  const home = resolver.resolve(homedir());
+
+  // Browsing into sensitive home dirs is forbidden
+  const sensitiveHomeDirs = [".ssh", ".aws", ".gnupg", ".azure", ".kube", ".pi"];
+  for (const sub of sensitiveHomeDirs) {
+    const full = resolver.resolve(home, sub);
+    const cmpFull = isWindows ? full.toLowerCase() : full;
+    const fullWithSep = cmpFull.endsWith(resolver.sep) ? cmpFull : cmpFull + resolver.sep;
+    if (cmp === cmpFull || cmp.startsWith(fullWithSep)) {
+      return { restricted: true, reason: `Access to sensitive directory "${sub}" is forbidden` };
+    }
+  }
+
+  // Browsing into system directories is forbidden
+  const systemDirs: string[] = [];
+  if (isWindows) {
+    const sysRoot = process.env.SystemRoot || process.env.WINDIR || "C:\\Windows";
+    const progFiles = process.env.ProgramFiles || "C:\\Program Files";
+    const progFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    const progData = process.env.ProgramData || "C:\\ProgramData";
+    systemDirs.push(sysRoot, progFiles, progFilesX86, progData);
+  } else {
+    systemDirs.push("/etc", "/var", "/sys", "/proc", "/dev", "/boot", "/root", "/bin", "/sbin", "/usr");
+  }
+
+  for (const sysDir of systemDirs) {
+    const resolvedSys = resolver.resolve(sysDir);
+    const cmpSys = isWindows ? resolvedSys.toLowerCase() : resolvedSys;
+    const sysWithSep = cmpSys.endsWith(resolver.sep) ? cmpSys : cmpSys + resolver.sep;
+    if (cmp === cmpSys || cmp.startsWith(sysWithSep)) {
+      return { restricted: true, reason: `Access to system directory "${sysDir}" is forbidden` };
+    }
+  }
+
+  return { restricted: false };
+}
+

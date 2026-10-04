@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stat } from "fs/promises";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { isRestrictedBrowseDirectory } from "@/lib/path-security";
 import {
   createDirectory,
   getBrowseStartDirectory,
@@ -13,6 +14,10 @@ import {
 
 // GET /api/cwd/browse?path=...：列出文件系统中的可读子目录。
 export async function GET(request: NextRequest) {
+  if (!isApiRequestAllowed(request)) {
+    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  }
+
   try {
     const requested = request.nextUrl.searchParams.get("path")?.trim();
 
@@ -32,6 +37,11 @@ export async function GET(request: NextRequest) {
       resolved = await resolveDirectory(candidate);
     } catch {
       return NextResponse.json({ error: "Directory does not exist" }, { status: 404 });
+    }
+
+    const restriction = isRestrictedBrowseDirectory(resolved);
+    if (restriction.restricted) {
+      return NextResponse.json({ error: restriction.reason || "Access to directory is restricted" }, { status: 403 });
     }
 
     const directoryStat = await stat(resolved);
